@@ -440,3 +440,171 @@ chỉ được gọi sau khi đã ghi đủ 95 bit.
 Như vậy, dữ liệu đầu vào của nhánh bí mật là một chuỗi
 95 lần nhấn A/B. Bước tiếp theo là phân tích hàm `$8158`
 để xác định chuỗi nào được chấp nhận.
+
+## 7. Phân tích hàm kiểm tra tại `$8158`
+
+Sau khi nhận đủ 95 bit từ các nút A/B, chương trình gọi hàm
+`$8158`. Hàm này so sánh từng bit đầu vào với một bit được tính
+từ hai bảng dữ liệu trong ROM.
+
+### 7.1. Khởi tạo các biến và lấy bit đầu vào
+
+Trích xuất phần đầu hàm bằng lệnh:
+
+```bash
+sed -n '/^8158:/,/^817B:/p' disasm.txt
+```
+
+<img width="760" height="483" alt="image" src="https://github.com/user-attachments/assets/af1adfb5-d9b8-4451-9215-7ea4bb9320fa" />
+
+
+*Hình 6. Disassembly phần khởi tạo và lấy bit đầu vào của checker trên Kali Linux.*
+
+Các biến RAM được sử dụng:
+
+| Địa chỉ | Vai trò | Giá trị khởi tạo |
+|---|---|---|
+| `$14` | Chỉ số bit `i` | 0 |
+| `$15` | Chỉ số bảng `j` | 11 |
+| `$16` | Biến tích lũy sai lệch | 0 |
+| `$0F` | Bit đầu vào đang xét | Được cập nhật mỗi vòng |
+
+Chương trình tính vị trí bit trong byte bằng `i & 7`, sau đó
+dịch phải `i` ba lần để tính chỉ số byte `i >> 3`.
+
+Byte đầu vào được đọc từ `$0400 + (i >> 3)`. Bảng mặt nạ tại
+`$8609` được dùng để chọn bit tương ứng. Kết quả được chuẩn hóa
+thành 0 hoặc 1 rồi lưu vào `$0F`.
+
+Do buffer được ghi theo thứ tự bit cao trước, thao tác này tương
+đương:
+
+```python
+input_bit = (buffer[i >> 3] >> (7 - (i & 7))) & 1
+```
+
+### 7.2. Tính bit mong đợi bằng XOR
+
+Trích xuất phần còn lại của checker:
+
+```bash
+sed -n '/^817D:/,/^81A7:/p' disasm.txt
+```
+
+<img width="791" height="512" alt="image" src="https://github.com/user-attachments/assets/c4376fda-9fa7-44a8-8437-d0d4f4c3512f" />
+
+
+*Hình 7. Các phép XOR, cập nhật chỉ số và điều kiện trả về của checker.*
+
+Đoạn assembly tính bit mong đợi:
+
+```asm
+817D: LDX $15
+817F: LDA $8718,X
+8182: EOR $8798,X
+8185: EOR $14
+8187: AND #$01
+```
+
+Đặt `tableA` là bảng bắt đầu tại địa chỉ CPU `$8718` và
+`tableB` là bảng bắt đầu tại `$8798`.
+
+Trong assembly 6502, `EOR` thực hiện phép XOR. Vì vậy, đoạn mã
+trên tương đương:
+
+```python
+expected_bit = (tableA[j] ^ tableB[j] ^ i) & 1
+```
+
+Lệnh `AND #$01` chỉ giữ lại bit thấp nhất, nên kết quả luôn
+bằng 0 hoặc 1.
+
+Chương trình tiếp tục so sánh với bit đầu vào:
+
+```asm
+8189: EOR $0F
+818B: ORA $16
+818D: STA $16
+```
+
+Có thể biểu diễn bằng:
+
+```python
+mismatch |= expected_bit ^ input_bit
+```
+
+Nếu hai bit giống nhau, phép XOR cho kết quả 0.
+Nếu hai bit khác nhau, phép XOR cho kết quả 1.
+
+Do kết quả được tích lũy bằng OR, chỉ cần một bit sai thì
+`mismatch` sẽ khác 0 ở cuối vòng lặp.
+
+### 7.3. Quy luật cập nhật chỉ số bảng
+
+Đoạn cập nhật chỉ số:
+
+```asm
+818F: LDA $15
+8191: CLC
+8192: ADC #$25
+8194: AND #$7F
+8196: STA $15
+8198: INC $14
+819A: LDA $14
+819C: CMP #$5F
+819E: BNE $8162
+```
+
+`CLC` xóa cờ carry trước phép cộng.
+Vì `$25 = 37` và `$7F = 127`, ta có:
+
+```python
+j = (j + 37) & 0x7F
+i += 1
+```
+
+Phép AND với `0x7F` giữ chỉ số trong khoảng 0 đến 127,
+tương đương lấy modulo 128 ở đây.
+
+Ban đầu `j = 11`, nên ở vòng lặp thứ `i`:
+
+```python
+j = (11 + 37 * i) & 0x7F
+```
+
+Lệnh `CMP #$5F` kiểm tra mốc 95, vì vậy hàm xử lý
+các bit có chỉ số từ 0 đến 94.
+
+Kết hợp các bước, công thức bit hợp lệ là:
+
+```python
+j = (11 + 37 * i) & 0x7F
+expected_bit = (tableA[j] ^ tableB[j] ^ i) & 1
+```
+
+### 7.4. Điều kiện checker thành công
+
+Phần cuối hàm:
+
+```asm
+81A0: LDA $16
+81A2: BNE $81A6
+81A4: SEC
+81A5: RTS
+81A6: CLC
+81A7: RTS
+```
+
+Nếu `$16 = 0`, toàn bộ 95 bit đều khớp. Hàm thực hiện `SEC`
+để trả về với cờ carry bằng 1.
+
+Nếu `$16` khác 0, có ít nhất một bit sai. Hàm thực hiện `CLC`
+để trả về với cờ carry bằng 0.
+
+Tại nơi gọi hàm, lệnh `BCC $813F` rẽ nhánh khi carry bằng 0.
+Nếu kiểm tra thành công, chương trình tiếp tục đặt `$04 = 4`
+và `$05 = 5`.
+
+Như vậy, có thể khôi phục trực tiếp chuỗi bit đúng bằng cách
+đọc hai bảng dữ liệu và áp dụng công thức trên cho 95 vị trí,
+không cần thử tất cả các chuỗi A/B.
