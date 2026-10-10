@@ -736,3 +736,170 @@ Script cũng lưu:
 Kết quả này là chuỗi đầu vào suy ra từ thuật toán checker.
 Bước này mới tái hiện công thức bằng Python, chưa phải kiểm
 chứng bằng cách chạy chuỗi nút trong game hay gọi checker gốc.
+## 9. Phân tích gợi ý và giải mã thông điệp
+
+### 9.1. Xác định cách chương trình hiển thị chuỗi
+
+Hàm tại `$8478` đọc dữ liệu thông qua con trỏ `$12–$13`.
+Mỗi byte được ghi vào `$2007`; byte `0xFF` đánh dấu kết
+thúc chuỗi.
+
+Trích xuất assembly:
+
+```bash
+sed -n '/^8478:/,/^8486:/p' disasm.txt
+sed -n '/^85E0:/,/^8600:/p' disasm.txt
+```
+
+<img width="710" height="455" alt="image" src="https://github.com/user-attachments/assets/70c97a12-7118-4f89-b6ef-432be45e23fc" />
+
+
+*Hình 9. Hàm đọc chuỗi và các con trỏ đến dữ liệu gợi ý.*
+
+Trong đoạn vẽ màn hình Easter egg, chương trình thiết lập
+con trỏ đến `$86F1` và `$8701`, rồi gọi hàm `$8478`.
+
+Dữ liệu chữ được lưu dưới dạng mã tile, không phải ASCII.
+Để đọc thành văn bản, cần ánh xạ mã tile sang ký tự dựa
+trên bộ hình chữ trong CHR-ROM.
+<img width="808" height="847" alt="image" src="https://github.com/user-attachments/assets/c0e35226-f773-435f-9a7e-8393f7ddbdad" />
+
+*Hình 9b. Bảng tile trích từ CHR-ROM; số màu vàng là mã tile ở hệ hexadecimal.*
+
+Quan sát bảng tile, các mã `0x40–0x59` và `0x80–0x99`
+lần lượt biểu diễn hai bộ chữ A–Z. Tile `0x00` là ô trống,
+`0xB0` là dấu `!`, `0xB1` là dấu `.`, và `0xB5` là dấu `&`.
+
+Đây là cơ sở xây dựng hàm `decode_tile()` trong script đọc
+gợi ý. Riêng `0xFF` được xác định là dấu kết thúc chuỗi từ
+lệnh `CMP #$FF` trong hàm `$8478`, không phải từ hình tile.
+
+### 9.2. Trích nội dung gợi ý
+
+Sử dụng script `read_hints.py` để chuyển mã tile thành chữ:
+
+```bash
+python3 read_hints.py
+```
+
+<img width="560" height="182" alt="image" src="https://github.com/user-attachments/assets/ae736ee1-5bf7-4b35-8938-b21c49276a90" />
+
+
+*Hình 10. Nội dung các chuỗi của màn hình Easter egg được trích từ ROM trên Kali.*
+
+Các chuỗi đọc được:
+
+```text
+EASTER EGG FOUND!
+GREAT JOB ON FINDING
+THE EASTER EGG.
+I HOPE YOU LIKE
+BACON & EGGS...
+FIVE STRIPS AT A TIME.
+```
+
+Đây là kết quả phân tích tĩnh dữ liệu ROM, không phải
+ảnh chụp game đang chạy.
+<img width="952" height="911" alt="image" src="https://github.com/user-attachments/assets/92df78b4-68cc-4b65-ae57-20fab7b2242b" />
+
+*Hình 10b. Màn hình Easter egg được tái dựng từ dữ liệu ROM, không phải ảnh chụp game đang chạy trong trình giả lập.*
+
+Ảnh tái dựng thể hiện vị trí và nội dung các câu gợi ý.
+Hai câu `BACON & EGGS...` và `FIVE STRIPS AT A TIME.`
+là cơ sở để thử giải mã chuỗi A/B theo từng nhóm 5 bit.
+Phần tiếp theo kiểm tra giả thuyết này bằng cách chuyển
+95 bit thành 19 chữ cái.
+
+### 9.3. Suy ra cách chia nhóm 5 bit
+
+Cụm `BACON & EGGS` gợi đến mã Bacon, còn
+`FIVE STRIPS AT A TIME` gợi ý xử lý từng nhóm 5 phần tử.
+
+Chuỗi đầu vào gồm hai giá trị A/B, đã được ánh xạ thành
+0/1. Vì vậy, thử chia chuỗi 95 bit thành các nhóm 5 bit:
+
+```text
+95 / 5 = 19 nhóm
+```
+
+Sử dụng biến thể bảng chữ cái 26 ký tự:
+
+```text
+00000 = A
+00001 = B
+00010 = C
+...
+11001 = Z
+```
+
+Mỗi nhóm được đổi sang số nguyên, sau đó ánh xạ
+`0 → A`, `1 → B`, ..., `25 → Z`.
+
+Ví dụ:
+
+| Nhóm bit | Giá trị | Chữ |
+|---|---|---|
+| `10010` | 18 | S |
+| `00010` | 2 | C |
+| `01000` | 8 | I |
+| `00100` | 4 | E |
+| `01101` | 13 | N |
+
+### 9.4. Giải mã thông điệp
+
+Chạy script đọc chuỗi đã lưu trong `bits.txt`:
+
+```bash
+python3 decode_message.py
+```
+
+Phép chuyển đổi chính:
+
+```python
+value = int(group, 2)
+letter = chr(ord("A") + value)
+```
+
+<img width="1461" height="492" alt="image" src="https://github.com/user-attachments/assets/1090176a-7aef-409e-9797-e7a9b9c72253" />
+
+
+*Hình 11. Chuyển từng nhóm 5 bit thành chữ cái trên Kali Linux.*
+
+Kết quả:
+
+```text
+SCIENTIAPOTENTIAEST
+```
+
+Tách thành cụm từ:
+
+```text
+SCIENTIA POTENTIA EST
+```
+
+Cụm từ có nghĩa là “Tri thức là sức mạnh”.
+Kết quả có nghĩa phù hợp với cách giải mã được suy ra
+từ hai gợi ý trong ROM.
+## 10. Xây dựng flag
+
+Chuỗi giải mã được là:
+
+```text
+SCIENTIAPOTENTIAEST
+```
+
+Tách thành cụm từ có nghĩa:
+
+```text
+SCIENTIA POTENTIA EST
+```
+
+Theo định dạng đề bài, thay khoảng trắng bằng dấu `_`
+và đặt thông điệp trong `FortID{}`.
+
+Flag suy ra:
+
+```text
+FortID{SCIENTIA_POTENTIA_EST}
+```
+<img width="1145" height="816" alt="image" src="https://github.com/user-attachments/assets/dd9f8c1a-48e5-482a-96cd-68f3ca894f59" />
