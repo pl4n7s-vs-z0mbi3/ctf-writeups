@@ -608,3 +608,131 @@ và `$05 = 5`.
 Như vậy, có thể khôi phục trực tiếp chuỗi bit đúng bằng cách
 đọc hai bảng dữ liệu và áp dụng công thức trên cho 95 vị trí,
 không cần thử tất cả các chuỗi A/B.
+## 8. Trích hai bảng dữ liệu và khôi phục chuỗi 95 bit
+
+Từ phân tích checker, bit hợp lệ tại vị trí `i` được tính bằng:
+
+```python
+j = (11 + 37 * i) & 0x7F
+expected_bit = (tableA[j] ^ tableB[j] ^ i) & 1
+```
+
+Trong đó `i` chạy từ 0 đến 94. Hai bảng dữ liệu bắt đầu tại
+địa chỉ CPU `$8718` và `$8798`.
+
+### 8.1. Chuyển địa chỉ CPU sang offset trong file
+
+ROM đang phân tích sử dụng mapper 0, có 32 KiB PRG-ROM và
+không có trainer. Phần PRG-ROM bắt đầu sau header iNES dài
+16 byte và được ánh xạ vào vùng CPU `$8000–$FFFF`.
+
+Vì vậy:
+
+```text
+file_offset = 0x10 + (cpu_address - 0x8000)
+```
+
+Áp dụng cho hai bảng:
+
+| Bảng | Địa chỉ CPU | Offset trong file | Số byte trích |
+|---|---|---|---|
+| `tableA` | `$8718` | `0x0728` | 128 |
+| `tableB` | `$8798` | `0x07A8` | 128 |
+
+Cần phân biệt địa chỉ CPU với offset trong file: không thể
+dùng trực tiếp `rom[0x8718]` để đọc byte tại địa chỉ CPU `$8718`.
+
+Checker giới hạn chỉ số `j` bằng `& 0x7F`, nên chỉ số có thể
+nằm trong khoảng 0–127. Do đó, trích 128 byte tại mỗi vị trí
+là đủ để tái hiện các lần truy cập bảng.
+
+### 8.2. Khôi phục bit bằng Python
+
+Phần chính của script `extract_bits.py`:
+
+```python
+from pathlib import Path
+
+rom = Path("meteor_shower.nes").read_bytes()
+
+def cpu_to_offset(address):
+    return 0x10 + (address - 0x8000)
+
+offset_a = cpu_to_offset(0x8718)
+offset_b = cpu_to_offset(0x8798)
+
+table_a = rom[offset_a:offset_a + 128]
+table_b = rom[offset_b:offset_b + 128]
+
+bits = []
+for i in range(95):
+    j = (11 + 37 * i) & 0x7F
+    bit = (table_a[j] ^ table_b[j] ^ i) & 1
+    bits.append(bit)
+
+bit_string = "".join(str(bit) for bit in bits)
+buttons = "".join("B" if bit else "A" for bit in bits)
+```
+
+Chạy trên Kali Linux:
+
+```bash
+python3 extract_bits.py
+```
+
+<img width="1342" height="456" alt="image" src="https://github.com/user-attachments/assets/f14e00af-c136-40f7-b30c-37dee43a2cb9" />
+
+
+*Hình 8. Trích dữ liệu từ ROM và tính chuỗi 95 bit trên Kali Linux.*
+
+### 8.3. Đối chiếu các vòng lặp đầu tiên
+
+Kết quả năm vòng đầu:
+
+| `i` | `j` | `tableA[j]` | `tableB[j]` | Bit |
+|---|---|---|---|---|
+| 0 | 11 | `0x3C` | `0x01` | 1 |
+| 1 | 48 | `0xEA` | `0x01` | 0 |
+| 2 | 85 | `0x15` | `0x03` | 0 |
+| 3 | 122 | `0x9F` | `0x01` | 1 |
+| 4 | 31 | `0x14` | `0x02` | 0 |
+
+Ví dụ tại `i = 0`:
+
+```text
+j = (11 + 37 × 0) & 127 = 11
+
+bit = (0x3C XOR 0x01 XOR 0x00) & 0x01
+    = 0x3D & 0x01
+    = 1
+```
+
+Vì handler ánh xạ `A = 0`, `B = 1`, nút đầu tiên phải là `B`.
+Năm bit đầu là `10010`, tương ứng với chuỗi nút `BAABA`.
+
+### 8.4. Chuỗi bit khôi phục được
+
+Script tạo ra đúng 95 bit:
+
+```text
+10010000100100000100011011001101000000000111101110100110010001101100110100000000001001001010011
+```
+
+Khi đóng gói theo thứ tự bit cao trước, buffer gồm 12 byte:
+
+```text
+90 90 46 cd 00 7b a6 46 cd 00 24 a6
+```
+
+12 byte chứa được 96 bit, nhưng checker chỉ xử lý 95 bit.
+Bit thấp nhất của byte cuối không được kiểm tra và được
+script giữ bằng 0.
+
+Script cũng lưu:
+
+- `bits.txt`: chuỗi 95 bit.
+- `buttons.txt`: chuỗi nút tương ứng, với `A = 0` và `B = 1`.
+
+Kết quả này là chuỗi đầu vào suy ra từ thuật toán checker.
+Bước này mới tái hiện công thức bằng Python, chưa phải kiểm
+chứng bằng cách chạy chuỗi nút trong game hay gọi checker gốc.
