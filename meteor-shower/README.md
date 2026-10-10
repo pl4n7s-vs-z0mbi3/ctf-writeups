@@ -315,3 +315,128 @@ Hai giá trị này tương ứng với nút A và B.
 Vì hàm xử lý A/B được gọi trực tiếp trong vòng chính,
 đây là vị trí cần phân tích tiếp để tìm cơ chế ghi
 và kiểm tra chuỗi nút bí mật.
+
+## 6. Phân tích cơ chế ghi chuỗi A/B
+
+### 6.1. Xác định giá trị của nút A và B
+
+Từ vòng lặp chính, tiếp tục phân tích hàm tại `$80EF`:
+
+```bash
+sed -n '/^80EF:/,/^8111:/p' disasm.txt
+```
+
+Hàm kiểm tra các nút mới nhấn bằng cách đọc `$03`
+và giữ lại hai bit thấp:
+
+```asm
+80F5: LDA $03
+80F7: AND #$03
+80F9: BEQ $8142
+```
+
+Nếu không có nút A/B mới được nhấn, chương trình bỏ qua.
+
+Sau đó, trạng thái hiện tại được kiểm tra:
+
+```asm
+80FB: LDA $01
+80FD: AND #$03
+80FF: CMP #$01
+8101: BEQ $8108
+8103: CMP #$02
+8105: BEQ $810D
+```
+
+Hai nhánh tương ứng:
+
+```asm
+8108: LDA #$00
+810A: JMP $810F
+810D: LDA #$01
+810F: STA $0F
+```
+
+Từ đó suy ra:
+
+| Nút | Giá trị sau khi lọc | Bit được lưu tại $0F |
+|---|---:|---:|
+| A | 1 | 0 |
+| B | 2 | 1 |
+
+Nhấn đồng thời A và B cho giá trị 3, không khớp hai nhánh,
+nên không ghi bit.
+
+<img width="522" height="396" alt="image" src="https://github.com/user-attachments/assets/67cf949a-3888-4560-8a91-31cb81d03f29" />
+
+
+*Hình 4. Đoạn assembly chuyển nút A thành bit 0 và nút B thành bit 1.*
+
+### 6.2. Cách ghi bit vào buffer
+
+Xem đoạn mã tiếp theo:
+
+```bash
+sed -n '/^8111:/,/^8142:/p' disasm.txt
+```
+
+Các biến được sử dụng:
+
+| Địa chỉ RAM | Vai trò |
+|---|---|
+| `$0C` | Số bit đã ghi |
+| `$0D` | Chỉ số byte trong buffer |
+| `$0E` | Mặt nạ xác định vị trí bit |
+| `$0F` | Bit vừa nhận từ nút A/B |
+| `$0400–$040B` | Buffer chứa chuỗi bit |
+
+Nếu bit nhận được là 1, chương trình dùng OR để bật
+bit tương ứng trong buffer:
+
+```asm
+8117: LDA $0400,X
+811A: ORA $0E
+811C: STA $0400,X
+```
+
+Nếu bit là 0, chương trình bỏ qua thao tác OR.
+
+Sau đó, mặt nạ được dịch sang phải:
+
+```asm
+811F: LSR $0E
+```
+
+Mặt nạ bắt đầu từ `0x80`, nên các bit được ghi theo thứ tự:
+
+```text
+80 → 40 → 20 → 10 → 08 → 04 → 02 → 01
+```
+
+Đây là thứ tự MSB-first: từ bit cao xuống bit thấp.
+
+### 6.3. Điều kiện gọi hàm kiểm tra
+```asm
+sed -n '/^8111:/,/^8142:/p' disasm.txt
+```
+Sau mỗi bit hợp lệ, bộ đếm tăng một đơn vị:
+
+```asm
+8129: INC $0C
+812B: LDA $0C
+812D: CMP #$5F
+812F: BNE $8142
+8131: JSR $8158
+```
+
+Vì `0x5F = 95`, hàm kiểm tra tại `$8158`
+chỉ được gọi sau khi đã ghi đủ 95 bit.
+
+<img width="548" height="537" alt="image" src="https://github.com/user-attachments/assets/7204b78d-2777-4170-a6ab-babdf9407585" />
+
+
+*Hình 5. Cơ chế ghi bit vào buffer và điều kiện gọi checker sau 95 bit.*
+
+Như vậy, dữ liệu đầu vào của nhánh bí mật là một chuỗi
+95 lần nhấn A/B. Bước tiếp theo là phân tích hàm `$8158`
+để xác định chuỗi nào được chấp nhận.
