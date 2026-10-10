@@ -683,7 +683,7 @@ python3 extract_bits.py
 <img width="1342" height="456" alt="image" src="https://github.com/user-attachments/assets/f14e00af-c136-40f7-b30c-37dee43a2cb9" />
 
 
-*Hình 8. Trích dữ liệu từ ROM và tính chuỗi 95 bit trên Kali Linux.*
+*Hình 8. Trích dữ liệu từ ROM và tính chuỗi 95 bit trên Kali Linux, Script đọc hai bảng tại offset 0x0728 và 0x07A8, sau đó tính từng bit theo công thức đã phân tích ở mục 7. Kết quả gồm 95 bit; năm bit đầu là 10010, tương ứng với chuỗi nút BAABA. Khi đóng gói theo thứ tự bit cao trước, thu được buffer 90 90 46 cd 00 7b a6 46 cd 00 24 a6. Chuỗi bit và chuỗi nút được lưu lần lượt vào bits.txt và buttons.txt..*
 
 ### 8.3. Đối chiếu các vòng lặp đầu tiên
 
